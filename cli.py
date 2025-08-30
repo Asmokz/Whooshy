@@ -1,65 +1,50 @@
 # cli.py
 import argparse
-from crawler import crawl
-from db import save_page, get_all_pages
-from searcher import search_pages
-from indexer import build_index, search_index
+from crawler import crawl_multithreaded
+from searcher import search_func
 import settings
+import click
+import time
+import os
+
+from whooshy import load_data_into_whoosh
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Mini moteur de recherche (CLI)")
+@click.group()
+def cli():
+    """Whooshy Searcher CLI"""
+    pass
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+@cli.command()
+@click.option('--start-url', default="https://books.toscrape.com/", help="URL de départ du crawl.")
+@click.option('--max-pages', default=20, type=int, help="Nombre maximum de pages à crawler.")
+@click.option('--max-threads', default=10, type=int, help="Nombre de threads maximum pour le crawl.")
+def crawl(start_url, max_pages, max_threads):
+    """Lance le crawler et indexe les pages dans MongoDB."""
+    start_time = time.time()
+    crawl_multithreaded(start_url, max_threads=max_threads, max_pages=max_pages)
+    print("--- %s seconds ---" % (time.time() - start_time))
 
-    # Commande pour crawler
-    crawl_parser = subparsers.add_parser("crawl", help="Crawler une URL")
-    crawl_parser.add_argument("url", help="URL de départ")
-    crawl_parser.add_argument(
-        "--depth", type=int, default=settings.MAX_DEPTH, help="Profondeur de crawl"
-    )
-
-    # Commande pour rechercher (full-text regex)
-    search_parser = subparsers.add_parser("search", help="Rechercher un mot-clé")
-    search_parser.add_argument("query", help="Mot-clé à chercher")
-
-    # Commande pour indexer (TF-IDF / autre méthode)
-    subparsers.add_parser("index", help="Construire l’index des pages")
-    index_search_parser = subparsers.add_parser("index-search", help="Rechercher via l’index")
-    index_search_parser.add_argument("query", help="Mot-clé à chercher")
-
-    # Commande pour afficher la base
-    subparsers.add_parser("showdb", help="Lister les pages en base")
-
-    args = parser.parse_args()
-
-    if args.command == "crawl":
-        print(f"Crawling depuis {args.url} (profondeur {args.depth})...")
-        pages = crawl(args.url, args.depth)
-        for page in pages:
-            save_page(page)
-
-    elif args.command == "search":
-        results = search_pages(args.query)
-        print(f"Résultats pour '{args.query}':")
-        for r in results:
-            print(f"- {r['url']}")
-
-    elif args.command == "index":
-        print("Construction de l’index...")
-        build_index()
-
-    elif args.command == "index-search":
-        results = search_index(args.query)
-        print(f"Résultats indexés pour '{args.query}':")
-        for r in results:
-            print(f"- {r['url']} (score={r['score']})")
-
-    elif args.command == "showdb":
-        pages = get_all_pages()
-        print("Pages en base :")
-        for p in pages:
-            print(f"- {p['url']}")
+@cli.command()
+def load_index():
+    """Charge les données de MongoDB vers l'index Whoosh."""
+    global ix
+    start_time = time.time()
+    ix = load_data_into_whoosh()
+    print("--- %s seconds ---" % (time.time() - start_time))
+    
+@cli.command()
+@click.argument('query_str')
+def search(query_str):
+    """Effectue une recherche sur l'index Whoosh."""
+    # On s'assure que l'index a été chargé
+    if not os.path.exists(settings.INDEX_DIR) or ix.doc_count() == 0:
+        print("L'index Whoosh n'existe pas ou est vide. Veuillez d'abord le charger avec la commande 'load-index'.")
+        return
+    
+    start_time = time.time()
+    search_func(query_str, ix)
+    print("--- %s seconds ---" % (time.time() - start_time))
 
 if __name__ == "__main__":
-    main()
+    cli()

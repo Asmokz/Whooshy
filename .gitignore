@@ -3,3 +3,4 @@ main.py
 /indexdir
 .env
 __pycache__/
+/venv
